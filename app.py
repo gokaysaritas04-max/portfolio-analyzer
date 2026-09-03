@@ -391,24 +391,50 @@ with st.spinner("Fetching market data..."):
     current_prices = fetch_current_prices(tickers)
     company_names = fetch_company_names(tickers)
 
-missing = [t for t in all_tickers if t not in prices.columns]
-if missing:
-    st.error(
-        f"No data returned for: {', '.join(missing)}. "
-        "Check the ticker symbols and try again."
+def has_usable_data(df: pd.DataFrame, ticker: str, min_points: int = 2) -> bool:
+    """A ticker only counts as valid if it actually returned real price
+    points — not just a column that exists but is empty or all-NaN
+    (which happens for fake tickers, delisted symbols, or ones with no
+    trading activity in the selected window)."""
+    return ticker in df.columns and df[ticker].notna().sum() >= min_points
+
+
+invalid_tickers = [t for t in tickers if not has_usable_data(prices, t)]
+if invalid_tickers:
+    st.warning(
+        f"Please enter a valid ticker — no usable price data found for: "
+        f"{', '.join(invalid_tickers)}. These holdings were excluded from "
+        f"the analysis below."
     )
-if prices.empty or all(t not in prices.columns for t in tickers):
+
+held_tickers = [t for t in tickers if has_usable_data(prices, t)]
+if not held_tickers:
+    st.error("Please enter a valid ticker. None of the tickers entered returned usable price data.")
     st.stop()
+
+benchmark_available = has_usable_data(prices, benchmark_ticker)
+if not benchmark_available:
+    st.warning(
+        f"Please enter a valid ticker — no usable price data found for "
+        f"benchmark '{benchmark_ticker}'. Benchmark comparison will be skipped."
+    )
 
 # --------------------------------------------------------------------------
 # Portfolio value over time
 # --------------------------------------------------------------------------
 
 shares_map = dict(zip(holdings_df["Ticker"], holdings_df["Shares"]))
-held_tickers = [t for t in tickers if t in prices.columns]
 
 portfolio_prices = prices[held_tickers].dropna(how="all")
 portfolio_prices = portfolio_prices.ffill().dropna(how="any")
+
+if portfolio_prices.empty:
+    st.error(
+        "Please enter a valid ticker. The selected holdings don't share "
+        "any overlapping trading days in this history window — try a "
+        "longer window or different tickers."
+    )
+    st.stop()
 
 shares_vector = np.array([shares_map[t] for t in held_tickers])
 portfolio_value_series = portfolio_prices.mul(shares_vector, axis=1).sum(axis=1)
@@ -432,8 +458,9 @@ mdd = max_drawdown(portfolio_value_series)
 # --------------------------------------------------------------------------
 # Benchmark comparison
 # --------------------------------------------------------------------------
+# (benchmark_available was already determined above, right after fetching
+# prices, so a bad benchmark ticker can't crash this section either)
 
-benchmark_available = benchmark_ticker in prices.columns
 if benchmark_available:
     benchmark_prices = prices[benchmark_ticker].dropna()
     benchmark_cum = benchmark_prices / benchmark_prices.iloc[0] - 1
