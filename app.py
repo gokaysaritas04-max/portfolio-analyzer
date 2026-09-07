@@ -364,12 +364,14 @@ holdings_editor_output = st.sidebar.data_editor(
     key="holdings_editor",
 )
 
-# Keep exactly what the editor returned as its own backing data, untouched.
-# Feeding a reshaped/deduped version back in here (instead of the raw
-# output) is what causes a newly typed row to vanish on the first try —
-# the editor's internal state gets confused when its own source data
-# changes shape out from under it between reruns.
-st.session_state.holdings = holdings_editor_output
+# Deliberately NOT writing holdings_editor_output back into
+# st.session_state.holdings here. This widget has a `key`, so Streamlit
+# already tracks its state internally and automatically across reruns.
+# Manually mirroring that state into a second variable and feeding it
+# back in as this same widget's starting value creates two competing
+# sources of truth — which is what was causing rows to vanish or the
+# whole table to reset. st.session_state.holdings is only ever used to
+# seed the very first render, before the widget has any state of its own.
 
 period_label_to_code = {
     "1 month": "1mo",
