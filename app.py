@@ -230,6 +230,47 @@ def fetch_company_names(tickers: tuple[str, ...]) -> dict:
     return names
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ticker_currencies(tickers: tuple[str, ...]) -> dict:
+    """Each ticker's native trading currency, e.g. 'USD', 'TRY', 'INR'.
+    Defaults to USD if it can't be determined, since that's correct for
+    the overwhelming majority of US-listed tickers."""
+    currencies = {}
+    for t in tickers:
+        currency = None
+        try:
+            fast = yf.Ticker(t).fast_info
+            currency = fast.get("currency") if hasattr(fast, "get") else getattr(fast, "currency", None)
+        except Exception:
+            pass
+        if not currency:
+            try:
+                currency = yf.Ticker(t).info.get("currency")
+            except Exception:
+                pass
+        currencies[t] = (currency or "USD").upper()
+    return currencies
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fx_rate_series(currency: str, period: str) -> pd.Series:
+    """Units of `currency` per 1 USD, as a daily series — e.g. for TRY,
+    how many Turkish Lira equal one US dollar on each date. Used to
+    convert a foreign-currency price into USD by dividing by this rate."""
+    if currency == "USD":
+        return pd.Series(dtype=float)
+    pair = f"USD{currency}=X"
+    try:
+        data = yf.download(pair, period=period, auto_adjust=True, progress=False)
+    except Exception:
+        return pd.Series(dtype=float)
+    if data.empty:
+        return pd.Series(dtype=float)
+    if isinstance(data.columns, pd.MultiIndex):
+        return data["Close"][pair].dropna()
+    return data["Close"].dropna()
+
+
 # --------------------------------------------------------------------------
 # Metric calculations
 # --------------------------------------------------------------------------
@@ -447,6 +488,53 @@ if portfolio_prices.empty:
         "longer window or different tickers."
     )
     st.stop()
+
+# --------------------------------------------------------------------------
+# Currency conversion — every holding is converted to USD so the portfolio
+# total, returns, and allocation are all measured in a single, consistent
+# currency. Without this, a ticker priced in e.g. Turkish Lira would be
+# added to a USD total as if 1 TRY = 1 USD, producing a meaningless number.
+# --------------------------------------------------------------------------
+
+currencies = fetch_ticker_currencies(tuple(held_tickers))
+foreign_currencies = sorted({c for c in currencies.values() if c != "USD"})
+
+converted_tickers = []
+fx_failed_tickers = []
+
+for currency in foreign_currencies:
+    fx_series = fetch_fx_rate_series(currency, period_code)
+    tickers_in_currency = [t for t in held_tickers if currencies.get(t) == currency]
+    if fx_series.empty:
+        fx_failed_tickers.extend(tickers_in_currency)
+        continue
+    fx_aligned = fx_series.reindex(portfolio_prices.index).ffill().bfill()
+    if fx_aligned.isna().all():
+        fx_failed_tickers.extend(tickers_in_currency)
+        continue
+    for t in tickers_in_currency:
+        portfolio_prices[t] = portfolio_prices[t] / fx_aligned
+        latest_rate = fx_aligned.iloc[-1]
+        if t in current_prices and latest_rate:
+            current_prices[t] = current_prices[t] / latest_rate
+        converted_tickers.append(t)
+
+if fx_failed_tickers:
+    st.warning(
+        f"Couldn't fetch a live exchange rate for: {', '.join(fx_failed_tickers)}. "
+        f"These holdings were excluded from the analysis."
+    )
+    held_tickers = [t for t in held_tickers if t not in fx_failed_tickers]
+    if not held_tickers:
+        st.error("Please enter a valid ticker. No holdings remained after currency conversion.")
+        st.stop()
+    portfolio_prices = portfolio_prices[held_tickers]
+
+if converted_tickers:
+    converted_labels = [f"{t} ({currencies[t]})" for t in converted_tickers]
+    st.info(
+        f"Converted to USD using live exchange rates: {', '.join(converted_labels)}."
+    )
 
 shares_vector = np.array([shares_map[t] for t in held_tickers])
 portfolio_value_series = portfolio_prices.mul(shares_vector, axis=1).sum(axis=1)
