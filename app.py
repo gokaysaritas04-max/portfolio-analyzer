@@ -351,7 +351,7 @@ if "holdings" not in st.session_state:
         {"Ticker": pd.Series(dtype="str"), "Shares": pd.Series(dtype="float")}
     )
 
-holdings_df = st.sidebar.data_editor(
+holdings_editor_output = st.sidebar.data_editor(
     st.session_state.holdings,
     num_rows="dynamic",
     use_container_width=True,
@@ -363,6 +363,13 @@ holdings_df = st.sidebar.data_editor(
     },
     key="holdings_editor",
 )
+
+# Keep exactly what the editor returned as its own backing data, untouched.
+# Feeding a reshaped/deduped version back in here (instead of the raw
+# output) is what causes a newly typed row to vanish on the first try —
+# the editor's internal state gets confused when its own source data
+# changes shape out from under it between reruns.
+st.session_state.holdings = holdings_editor_output
 
 period_label_to_code = {
     "1 month": "1mo",
@@ -409,8 +416,10 @@ st.caption(
 )
 st.markdown("<hr class='header-rule'/>", unsafe_allow_html=True)
 
-# Clean holdings input
-holdings_df = holdings_df.dropna(subset=["Ticker"])
+# Clean holdings input into a separate copy — never write this back into
+# st.session_state.holdings, since that would reshape the editor's own
+# backing data and cause the "first entry disappears" glitch above.
+holdings_df = holdings_editor_output.dropna(subset=["Ticker"]).copy()
 holdings_df["Ticker"] = holdings_df["Ticker"].str.strip().str.upper()
 holdings_df = holdings_df[holdings_df["Ticker"] != ""]
 holdings_df = holdings_df[holdings_df["Shares"] > 0]
@@ -425,8 +434,6 @@ if duplicate_tickers:
         f"Share counts for the same ticker are summed automatically."
     )
 holdings_df = holdings_df.groupby("Ticker", as_index=False)["Shares"].sum()
-
-st.session_state.holdings = holdings_df
 
 if not run and "last_results" not in st.session_state:
     st.info("Set up holdings in the sidebar, then select Run analysis.")
