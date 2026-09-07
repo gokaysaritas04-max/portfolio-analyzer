@@ -34,6 +34,9 @@ st.set_page_config(
 )
 
 TRADING_DAYS_PER_YEAR = 252
+MIN_RELIABLE_TRADING_DAYS = 60  # roughly 3 months — below this, annualizing
+                                 # a short stretch of performance into a
+                                 # full-year figure gets statistically shaky
 
 # --------------------------------------------------------------------------
 # Design system — dark terminal palette
@@ -574,6 +577,25 @@ else:
     benchmark_cum = None
 
 portfolio_cum = portfolio_value_series / portfolio_value_series.iloc[0] - 1
+
+# --------------------------------------------------------------------------
+# Short-window caution
+# --------------------------------------------------------------------------
+# Annualizing is just math — (1 + return) scaled up to a full year — but
+# over a short window it can turn an ordinary week or month into a wildly
+# overstated (or understated) "yearly" figure. Flag it before showing the
+# numbers, not after, so it's read as a caveat rather than an excuse.
+
+num_trading_days = len(portfolio_value_series)
+if num_trading_days < MIN_RELIABLE_TRADING_DAYS:
+    st.warning(
+        f"This history window only covers {num_trading_days} trading days. "
+        f"Annualized return, volatility, and Sharpe ratio extrapolate that "
+        f"short stretch out to a full year and can be misleading — a good "
+        f"or bad few weeks doesn't necessarily predict a full year. Consider "
+        f"a longer history window (6 months or more) for more reliable "
+        f"annualized figures."
+    )
 
 # --------------------------------------------------------------------------
 # Top metrics row
