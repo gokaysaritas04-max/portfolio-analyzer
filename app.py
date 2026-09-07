@@ -371,6 +371,7 @@ period_label_to_code = {
     "1 year": "1y",
     "2 years": "2y",
     "5 years": "5y",
+    "10 years": "10y",
 }
 period_label = st.sidebar.selectbox(
     "History window", list(period_label_to_code.keys()), index=3
