@@ -342,16 +342,13 @@ def colorize_by_sign(row: pd.Series, skip_cols=("Metric", "Ticker"), skip_rows=(
 
 st.sidebar.subheader("Portfolio setup", anchor=False)
 st.sidebar.caption(
-    "Add tickers and share counts. Prices are pulled live from Yahoo Finance."
+    "Enter the tickers and share counts you actually hold. Prices are "
+    "pulled live from Yahoo Finance."
 )
 
 if "holdings" not in st.session_state:
     st.session_state.holdings = pd.DataFrame(
-        [
-            {"Ticker": "AAPL", "Shares": 10.0},
-            {"Ticker": "MSFT", "Shares": 5.0},
-            {"Ticker": "TSLA", "Shares": 3.0},
-        ]
+        {"Ticker": pd.Series(dtype="str"), "Shares": pd.Series(dtype="float")}
     )
 
 holdings_df = st.sidebar.data_editor(
