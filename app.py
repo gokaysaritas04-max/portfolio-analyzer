@@ -372,6 +372,18 @@ holdings_df = holdings_df.dropna(subset=["Ticker"])
 holdings_df["Ticker"] = holdings_df["Ticker"].str.strip().str.upper()
 holdings_df = holdings_df[holdings_df["Ticker"] != ""]
 holdings_df = holdings_df[holdings_df["Shares"] > 0]
+
+# Combine duplicate tickers by summing shares — entering TSLA twice (3 + 3)
+# should behave like one TSLA position of 6 shares, not two separate 3-share
+# rows that silently overwrite or double-count each other downstream.
+duplicate_tickers = holdings_df["Ticker"][holdings_df["Ticker"].duplicated()].unique().tolist()
+if duplicate_tickers:
+    st.info(
+        f"Combined duplicate entries for: {', '.join(duplicate_tickers)}. "
+        f"Share counts for the same ticker are summed automatically."
+    )
+holdings_df = holdings_df.groupby("Ticker", as_index=False)["Shares"].sum()
+
 st.session_state.holdings = holdings_df
 
 if not run and "last_results" not in st.session_state:
