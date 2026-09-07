@@ -399,6 +399,20 @@ risk_free_rate_pct = st.sidebar.number_input(
 )
 risk_free_rate = risk_free_rate_pct / 100
 
+sim_horizon_label_to_days = {
+    "3 months": 63,
+    "6 months": 126,
+    "1 year": 252,
+    "2 years": 504,
+}
+sim_horizon_label = st.sidebar.selectbox(
+    "Simulation horizon",
+    list(sim_horizon_label_to_days.keys()),
+    index=2,
+    help="How far into the future the Monte Carlo projection runs.",
+)
+sim_horizon_days = sim_horizon_label_to_days[sim_horizon_label]
+
 run = st.sidebar.button("Run analysis", type="primary", use_container_width=True)
 
 st.sidebar.divider()
@@ -791,6 +805,80 @@ if len(held_tickers) > 1:
     )
     fig_corr.update_traces(textfont=CHART_FONT)
     st.plotly_chart(style_fig(fig_corr, height=380), use_container_width=True)
+
+# --------------------------------------------------------------------------
+# Monte Carlo projection
+# --------------------------------------------------------------------------
+# Projects future portfolio value as many random simulated paths, using
+# the portfolio's own historical daily return and volatility as the model
+# inputs (geometric Brownian motion — the standard textbook approach for
+# this kind of projection, not a guarantee of what will actually happen).
+
+st.divider()
+st.subheader("Monte Carlo projection", anchor=False)
+st.caption(
+    f"{sim_horizon_days:,} trading days ({sim_horizon_label}) simulated forward "
+    f"from today, using your portfolio's own historical daily return and "
+    f"volatility over the selected history window."
+)
+
+N_SIMULATIONS = 500
+mu = portfolio_daily_returns.mean()
+sigma = portfolio_daily_returns.std()
+
+if pd.isna(mu) or pd.isna(sigma) or sigma == 0:
+    st.info(
+        "Not enough return history in the selected window to run a "
+        "simulation. Try a longer history window."
+    )
+else:
+    rng = np.random.default_rng(seed=42)  # fixed seed: same inputs give
+                                            # the same projection each run,
+                                            # rather than reshuffling on
+                                            # every unrelated interaction
+    drift = mu - 0.5 * sigma**2
+    shocks = rng.normal(loc=0.0, scale=sigma, size=(sim_horizon_days, N_SIMULATIONS))
+    log_returns = drift + shocks
+    cumulative_log_returns = np.cumsum(log_returns, axis=0)
+    simulated_paths = current_value * np.exp(cumulative_log_returns)
+    simulated_paths = np.vstack([np.full(N_SIMULATIONS, current_value), simulated_paths])
+
+    day_index = np.arange(simulated_paths.shape[0])
+    p10, p50, p90 = np.percentile(simulated_paths, [10, 50, 90], axis=1)
+    final_values = simulated_paths[-1]
+    prob_of_loss = float((final_values < current_value).mean())
+
+    fig_mc = go.Figure()
+    fig_mc.add_trace(go.Scatter(
+        x=day_index, y=p90, mode="lines", line=dict(color=BENCHMARK_LINE, width=1, dash="dash"),
+        name="90th percentile", showlegend=True,
+    ))
+    fig_mc.add_trace(go.Scatter(
+        x=day_index, y=p10, mode="lines", line=dict(color=BENCHMARK_LINE, width=1, dash="dash"),
+        name="10th percentile", fill="tonexty", fillcolor="rgba(245, 166, 35, 0.08)",
+        showlegend=True,
+    ))
+    fig_mc.add_trace(go.Scatter(
+        x=day_index, y=p50, mode="lines", line=dict(color=ACCENT, width=2),
+        name="Median projection",
+    ))
+    fig_mc.add_hline(y=current_value, line=dict(color=HAIRLINE, width=1, dash="dot"))
+    fig_mc.update_xaxes(title_text="Trading days from today")
+    fig_mc.update_yaxes(title_text="Projected portfolio value ($)")
+    st.plotly_chart(style_fig(fig_mc, height=380), use_container_width=True)
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Median projected value", f"${p50[-1]:,.2f}")
+    mc2.metric("10th percentile (downside)", f"${p10[-1]:,.2f}")
+    mc3.metric("90th percentile (upside)", f"${p90[-1]:,.2f}")
+    mc4.metric("Probability of a loss", fmt_pct(prob_of_loss))
+
+    st.caption(
+        f"Based on {N_SIMULATIONS} simulated paths assuming daily returns are "
+        f"normally distributed with your portfolio's own historical mean and "
+        f"volatility. Real markets don't perfectly follow this model — this "
+        f"is a statistical projection, not a forecast or guarantee."
+    )
 
 st.session_state.last_results = True
 
